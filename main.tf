@@ -169,7 +169,7 @@ resource "aws_eks_addon" "ebs_csi_driver" {
   addon_name               = "aws-ebs-csi-driver"
   addon_version            = "v1.31.0-eksbuild.1"
   service_account_role_arn = module.ebs_csi_driver_irsa.iam_role_arn
-  
+
   # Updated conflict resolution parameters
   resolve_conflicts_on_create = "OVERWRITE"
   resolve_conflicts_on_update = "OVERWRITE"
