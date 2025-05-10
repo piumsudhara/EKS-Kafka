@@ -62,6 +62,10 @@ on:
           - plan
           - apply
           - destroy
+      onfirm_destroy:
+        description: 'Type "yes" to confirm destroy (only required if action = destroy)'
+        required: false
+        default: 'no'
 
 jobs:
   terraform:
@@ -102,6 +106,21 @@ jobs:
             terraform plan
           elif [ "${{ github.event.inputs.action }}" = "apply" ]; then
             terraform apply -auto-approve
-          else
-            terraform destroy -auto-approve
-          fi
+          elif [ "${{ github.event.inputs.action }}" = "destroy" ]; then
+            if [ "${{ github.event.inputs.confirm_destroy }}" = "yes" ]; then
+              terraform destroy -auto-approve
+            else
+              echo "Destroy action not confirmed. Please type 'yes' in confirm_destroy."
+              exit 1
+            fi
+          fi  
+
+      # - name: Terraform Action
+      #   run: |
+      #     if [ "${{ github.event.inputs.action }}" = "plan" ]; then
+      #       terraform plan
+      #     elif [ "${{ github.event.inputs.action }}" = "apply" ]; then
+      #       terraform apply -auto-approve
+      #     else
+      #       terraform destroy -auto-approve
+      #     fi
