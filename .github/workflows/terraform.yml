@@ -56,9 +56,10 @@ on:
       action:
         description: 'Terraform Action'
         required: true
-        default: 'apply'
+        default: 'plan'
         type: choice
         options:
+          - plan
           - apply
           - destroy
 
@@ -98,9 +99,11 @@ jobs:
       - name: Terraform Plan
         run: terraform plan
 
-      - name: Terraform Apply or Destroy
+      - name: Terraform Action
         run: |
-          if [ "${{ github.event.inputs.action }}" = "apply" ]; then
+          if [ "${{ github.event.inputs.action }}" = "plan" ]; then
+            terraform plan
+          elif [ "${{ github.event.inputs.action }}" = "apply" ]; then
             terraform apply -auto-approve
           else
             terraform destroy -auto-approve
