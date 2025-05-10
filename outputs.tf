@@ -1,15 +1,19 @@
-# output "cluster_name" {
-#   value = aws_eks_cluster.main.name
-# }
+output "cluster_endpoint" {
+  description = "Endpoint for EKS control plane"
+  value       = module.eks.cluster_endpoint
+}
 
-# output "cluster_endpoint" {
-#   value = aws_eks_cluster.main.endpoint
-# }
+output "cluster_security_group_id" {
+  description = "Security group ids attached to the cluster control plane"
+  value       = module.eks.cluster_security_group_id
+}
 
-# output "cluster_ca_certificate" {
-#   value = aws_eks_cluster.main.certificate_authority[0].data
-# }
+output "region" {
+  description = "AWS region"
+  value       = "ap-southeast-1"
+}
 
-# output "node_group_role_arn" {
-#   value = aws_iam_role.eks_node_group.arn
-# }
+output "cluster_name" {
+  description = "Kubernetes Cluster Name"
+  value       = module.eks.cluster_name
+}
