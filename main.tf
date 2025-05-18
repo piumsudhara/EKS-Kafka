@@ -4,7 +4,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = ">= 5.0"
+      version = "~> 5.0"
     }
     kubernetes = {
       source  = "hashicorp/kubernetes"
@@ -14,25 +14,42 @@ terraform {
 }
 
 provider "aws" {
-  region = "ap-southeast-1"
+  region = var.aws_region
 }
 
-# VPC
+provider "kubernetes" {
+  host                   = module.eks.cluster_endpoint
+  cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
+
+  exec {
+    api_version = "client.authentication.k8s.io/v1beta1"
+    command     = "aws"
+    args = [
+      "eks",
+      "get-token",
+      "--cluster-name",
+      module.eks.cluster_name,
+      "--region",
+      var.aws_region
+    ]
+  }
+}
+
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
   version = "5.1.2"
 
-  name = "eks-vpc"
-  cidr = "10.0.0.0/16"
+  name = var.vpc_name
+  cidr = var.vpc_cidr
 
-  azs             = ["ap-southeast-1a", "ap-southeast-1b", "ap-southeast-1c"]
-  private_subnets = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
-  public_subnets  = ["10.0.101.0/24", "10.0.102.0/24", "10.0.103.0/24"]
+  azs             = var.vpc_azs
+  private_subnets = var.private_subnets_cidr
+  public_subnets  = var.public_subnets_cidr
 
-  enable_nat_gateway     = true
-  single_nat_gateway     = true
-  one_nat_gateway_per_az = false
-  enable_dns_hostnames   = true
+  enable_nat_gateway     = var.enable_nat_gateway
+  single_nat_gateway     = var.single_nat_gateway
+  one_nat_gateway_per_az = var.one_nat_gateway_per_az
+  enable_dns_hostnames   = var.enable_dns_hostnames
 
   public_subnet_tags = {
     "kubernetes.io/role/elb" = "1"
@@ -42,34 +59,11 @@ module "vpc" {
     "kubernetes.io/role/internal-elb" = "1"
   }
 
-  tags = {
-    Terraform   = "true"
-    Environment = "dev"
-  }
+  tags = var.common_tags
 }
 
-# IAM for EKS Cluster
-resource "aws_iam_role" "eks_cluster_role" {
-  name = "eks-cluster-role"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Action    = "sts:AssumeRole"
-      Effect    = "Allow"
-      Principal = { Service = "eks.amazonaws.com" }
-    }]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
-  role       = aws_iam_role.eks_cluster_role.name
-}
-
-# IAM for EKS Node Group
 resource "aws_iam_role" "eks_node_group_role" {
-  name = "eks-node-group-role"
+  name = "${var.cluster_name}-eks-node-group-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -79,6 +73,8 @@ resource "aws_iam_role" "eks_node_group_role" {
       Principal = { Service = "ec2.amazonaws.com" }
     }]
   })
+
+  tags = var.common_tags
 }
 
 resource "aws_iam_role_policy_attachment" "eks_worker_node_policy" {
@@ -96,36 +92,34 @@ resource "aws_iam_role_policy_attachment" "ec2_container_registry_readonly" {
   role       = aws_iam_role.eks_node_group_role.name
 }
 
-# EKS Cluster
 module "eks" {
   source  = "terraform-aws-modules/eks/aws"
   version = "19.16.0"
 
-  cluster_name                   = "my-eks-cluster"
-  cluster_version                = "1.31"
-  cluster_endpoint_public_access = true
+  cluster_name                   = var.cluster_name
+  cluster_version                = var.cluster_version
+  cluster_endpoint_public_access = var.cluster_endpoint_public_access
 
   vpc_id     = module.vpc.vpc_id
   subnet_ids = module.vpc.private_subnets
 
   eks_managed_node_groups = {
-    default = {
-      min_size       = 1
-      max_size       = 3
-      desired_size   = 2
-      instance_types = ["t3.medium"]
-      capacity_type  = "ON_DEMAND"
+    for k, v in var.node_groups : k => {
+      node_role_arn  = aws_iam_role.eks_node_group_role.arn
+      min_size       = v.min_size
+      max_size       = v.max_size
+      desired_size   = v.desired_size
+      instance_types = v.instance_types
+      capacity_type  = v.capacity_type
+      disk_size      = v.disk_size
+      labels         = v.labels
+      taints         = v.taints
     }
   }
 
-  cluster_addons = {
-    coredns    = { most_recent = true }
-    kube-proxy = { most_recent = true }
-    vpc-cni    = { most_recent = true }
-  }
+  cluster_addons = var.cluster_addons
 
   manage_aws_auth_configmap = true
-
   aws_auth_roles = [
     {
       rolearn  = aws_iam_role.eks_node_group_role.arn
@@ -134,23 +128,19 @@ module "eks" {
     }
   ]
 
-  tags = {
-    Terraform   = "true"
-    Environment = "dev"
-  }
+  tags = var.common_tags
 }
 
-# Data source to fetch cluster OIDC info
 data "aws_iam_openid_connect_provider" "eks" {
-  arn = module.eks.oidc_provider_arn
+  arn        = module.eks.oidc_provider_arn
+  depends_on = [module.eks]
 }
 
-# EBS CSI IRSA Role
 module "ebs_csi_driver_irsa" {
   source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
   version = "5.28.0"
 
-  role_name             = "ebs-csi-driver-role"
+  role_name             = var.ebs_csi_role_name
   attach_ebs_csi_policy = true
 
   oidc_providers = {
@@ -160,51 +150,33 @@ module "ebs_csi_driver_irsa" {
     }
   }
 
-  depends_on = [module.eks]
+  tags = var.common_tags
+  depends_on = [
+    module.eks,
+    data.aws_iam_openid_connect_provider.eks
+  ]
 }
 
-# EBS CSI Addon (with updated conflict resolution parameters)
 resource "aws_eks_addon" "ebs_csi_driver" {
-  cluster_name             = module.eks.cluster_name
-  addon_name               = "aws-ebs-csi-driver"
-  addon_version            = "v1.31.0-eksbuild.1"
-  service_account_role_arn = module.ebs_csi_driver_irsa.iam_role_arn
-
-  # Updated conflict resolution parameters
+  cluster_name                = module.eks.cluster_name
+  addon_name                  = "aws-ebs-csi-driver"
+  addon_version               = var.ebs_csi_addon_version
+  service_account_role_arn    = module.ebs_csi_driver_irsa.iam_role_arn
   resolve_conflicts_on_create = "OVERWRITE"
   resolve_conflicts_on_update = "OVERWRITE"
 
+  tags = var.common_tags
   depends_on = [
     module.eks,
     module.ebs_csi_driver_irsa
   ]
 }
 
-# Kubernetes Provider
-provider "kubernetes" {
-  host                   = module.eks.cluster_endpoint
-  cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
-
-  exec {
-    api_version = "client.authentication.k8s.io/v1beta1"
-    command     = "aws"
-    args = [
-      "eks",
-      "get-token",
-      "--cluster-name",
-      module.eks.cluster_name,
-      "--region",
-      "ap-southeast-1"
-    ]
-  }
-}
-
-# StorageClass for EBS
 resource "kubernetes_storage_class" "ebs_sc" {
   metadata {
-    name = "ebs-sc"
+    name = var.ebs_storage_class_name
     annotations = {
-      "storageclass.kubernetes.io/is-default-class" = "true"
+      "storageclass.kubernetes.io/is-default-class" = var.ebs_storage_class_is_default ? "true" : "false"
     }
   }
 
@@ -212,8 +184,7 @@ resource "kubernetes_storage_class" "ebs_sc" {
   volume_binding_mode = "WaitForFirstConsumer"
 
   parameters = {
-    type = "gp3"
+    type = var.ebs_storage_class_type
   }
-
   depends_on = [aws_eks_addon.ebs_csi_driver]
 }
