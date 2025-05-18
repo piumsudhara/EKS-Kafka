@@ -1,8 +1,8 @@
 terraform {
   backend "s3" {
-    bucket       = var.tfstate_bucket_name
+    bucket       = "eks-kafka"
     key          = "terraform/terraform.tfstate"
-    region       = var.aws_region
+    region       = "ap-southeast-1"
     encrypt      = true
     use_lockfile = true
   }
